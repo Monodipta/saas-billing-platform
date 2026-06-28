@@ -25,7 +25,7 @@
 
 ## 1. Repo Strategy — Why Monorepo
 
-### Decision: Monorepo with Gradle Multi-Project Build
+### Decision: Monorepo with Maven Multi-Module Build
 
 **Why not polyrepo (separate repos per service)?**
 
@@ -37,15 +37,16 @@
 | Portfolio impression | Fragmented | One clean GitHub repo |
 | CI pipeline | N pipelines | One unified pipeline |
 
-**Why not a full monorepo tool (Nx, Turborepo)?** — Those are JS-first. For a Java/Spring Boot backbone, a **Gradle multi-project build** is the industry standard (used at Netflix, LinkedIn). Python services get their own `pyproject.toml` inside their folder.
+**Why not a full monorepo tool (Nx, Turborepo)?** — Those are JS-first. For a Java/Spring Boot backbone, a **Maven multi-module build** is a proven industry approach (used widely in enterprise Java shops and Spring Boot projects). Maven's parent POM model gives clean dependency management and a single `mvn` command to build everything. Python services get their own `pyproject.toml` inside their folder.
 
 ### What this means in practice
 - One `git` repo: `saas-billing-platform`
-- Root `build.gradle.kts` coordinates all Java services
-- Each service is a **Gradle subproject** with its own `build.gradle.kts`
-- `shared/` module contains Avro schemas, protobuf definitions, common DTOs
+- Root `pom.xml` (parent POM) coordinates all Java services as `<modules>`
+- Each service is a **Maven module** with its own `pom.xml` that inherits from the parent
+- `shared/` module contains Avro schemas, protobuf definitions, common DTOs — declared as a dependency in sibling POMs
 - One root `docker-compose.yml` spins up everything locally
 - One `.github/workflows/` folder for all CI
+- Maven Wrapper (`mvnw` / `mvnw.cmd`) committed to the repo — no Maven install required on any machine
 
 ---
 
@@ -80,7 +81,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |           +-- GlobalErrorHandler.java
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   |-- auth-service/                           <- Auth (Java 21 / Spring Boot)
 |   |   |-- src/main/java/com/billing/auth/
@@ -96,7 +97,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |       +-- UserRepository.java
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   |-- billing-service/                        <- Core billing engine (Java 21 / Spring Boot)
 |   |   |-- src/main/java/com/billing/billing/
@@ -119,7 +120,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |       +-- BillingEventProducer.java   <- Publishes billing events to Kafka
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   |-- usage-aggregator/                       <- Kafka consumer + Redis writer (Java 21)
 |   |   |-- src/main/java/com/billing/aggregator/
@@ -135,7 +136,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |       +-- UsageTotalRepository.java
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   |-- invoice-service/                        <- Invoice generation (Java 21 / Spring Boot)
 |   |   |-- src/main/java/com/billing/invoice/
@@ -152,7 +153,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |       +-- Invoice.java
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   |-- payment-service/                        <- Mock payment + webhook handler (Java 21)
 |   |   |-- src/main/java/com/billing/payment/
@@ -168,7 +169,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |   |       +-- PaymentEventProducer.java
 |   |   |-- src/main/resources/
 |   |   |   +-- application.yml
-|   |   +-- build.gradle.kts
+|   |   +-- pom.xml
 |   |
 |   +-- notification-service/                   <- Event consumer + mock email (Python / FastAPI)
 |       |-- app/
@@ -210,7 +211,7 @@ saas-billing-platform/                          <- ROOT of monorepo
 |   |-- src/main/proto/
 |   |   |-- aggregator.proto                    <- gRPC: usage totals
 |   |   +-- plan.proto                          <- gRPC: plan details
-|   +-- build.gradle.kts
+|   +-- pom.xml
 |
 |-- infra/                                      <- All infrastructure as code
 |   |-- docker/
@@ -239,9 +240,12 @@ saas-billing-platform/                          <- ROOT of monorepo
 |
 |-- docker-compose.yml                          <- Spins up ALL services + infra locally
 |-- docker-compose.override.yml                 <- Local overrides (dev secrets etc.)
-|-- build.gradle.kts                            <- ROOT Gradle multi-project file
-|-- settings.gradle.kts                         <- Lists all subprojects
-|-- gradle.properties                           <- Shared versions (Spring Boot, Java, etc.)
+|-- pom.xml                                     <- ROOT Maven parent POM (multi-module)
+|-- .mvn/                                       <- Maven Wrapper metadata
+|   +-- wrapper/
+|       +-- maven-wrapper.properties
+|-- mvnw                                        <- Maven Wrapper script (Unix)
+|-- mvnw.cmd                                    <- Maven Wrapper script (Windows)
 |-- .env.example                                <- Template for local secrets
 |-- .gitignore
 +-- README.md                                   <- The thing interviewers read first
@@ -567,7 +571,26 @@ Follow this exact order. Do NOT skip ahead.
 
 [ ] 5. Create README.md skeleton (project name, what it is, link to docs)
 
-[ ] 6. Create root build.gradle.kts + settings.gradle.kts
+[ ] 6. Bootstrap Maven multi-module project:
+        # Generate Maven Wrapper (run once, no Maven install needed afterward)
+        mvn wrapper:wrapper
+        # This creates: mvnw, mvnw.cmd, .mvn/wrapper/maven-wrapper.properties
+
+        # Root pom.xml declares all services as <modules>:
+        # <modules>
+        #   <module>shared</module>
+        #   <module>services/api-gateway</module>
+        #   <module>services/auth-service</module>
+        #   <module>services/billing-service</module>
+        #   <module>services/usage-aggregator</module>
+        #   <module>services/invoice-service</module>
+        #   <module>services/payment-service</module>
+        # </modules>
+        #
+        # Root pom.xml also declares <dependencyManagement> with a Spring Boot BOM:
+        # spring-boot-dependencies, spring-cloud-dependencies, versions pinned here.
+        #
+        # Each service pom.xml inherits: <parent>...root pom...</parent>
 
 [ ] 7. Create docker-compose.yml with: PostgreSQL, Redis, Kafka, Zookeeper, Kafka UI
 
@@ -577,7 +600,7 @@ Follow this exact order. Do NOT skip ahead.
 
 [ ] 10. First commit:
         git add .
-        git commit -m "chore: project scaffold, folder structure and infra setup"
+        git commit -m "chore: project scaffold, maven multi-module setup and infra"
 
 [ ] 11. Create GitHub repo → push:
         git remote add origin https://github.com/YOUR_USERNAME/saas-billing-platform.git
@@ -692,23 +715,37 @@ Examples:
   fix: prevent double increment on kafka redelivery
   test: idempotency stress test for webhook handler (100 duplicate deliveries)
   docs: add architecture decision record for redis flush strategy
-  chore: add jacoco test coverage reporting to gradle build
+  chore: add jacoco test coverage reporting to maven build
 ```
 
 ### .gitignore (Root)
 
 ```gitignore
-# Java / Gradle
-.gradle/
-build/
+# Java / Maven
+target/
 *.class
 *.jar
+*.war
+*.ear
+
+# Maven Wrapper cache (keep the wrapper itself, ignore downloaded Maven)
+.mvn/wrapper/maven-wrapper.jar
+# Uncomment the next line if you want to ignore the whole .mvn folder:
+# .mvn/
 
 # IntelliJ IDEA
 .idea/
 *.iml
 *.iws
 out/
+
+# Eclipse / STS
+.project
+.classpath
+.settings/
+
+# VS Code
+.vscode/
 
 # Python
 __pycache__/
@@ -740,6 +777,7 @@ logs/
 
 # Generated protobuf/avro
 services/*/src/main/java/com/billing/**/generated/
+shared/src/main/java/com/billing/**/generated/
 ```
 
 ---
@@ -749,8 +787,14 @@ services/*/src/main/java/com/billing/**/generated/
 ### Prerequisites
 
 ```
-Java 21           Use SDKMAN:     sdk install java 21-tem
-Gradle 8.x        Comes with repo: ./gradlew (no install needed)
+Java 21           Use SDKMAN:  sdk install java 21-tem
+                  Or manually: https://adoptium.net/
+Maven             NOT required to install separately.
+                  Use the Maven Wrapper committed to the repo:
+                    ./mvnw (Linux/Mac)  |  mvnw.cmd (Windows)
+                  To bootstrap the wrapper on a fresh machine (one-time):
+                    mvn wrapper:wrapper   (if Maven is available)
+                    OR copy .mvn/ + mvnw/mvnw.cmd from another checkout.
 Docker Desktop    For Kafka, Redis, PostgreSQL containers
 Node 20+          For React frontend
 Python 3.11+      For notification-service
@@ -800,22 +844,33 @@ docker-compose up -d postgres redis kafka zookeeper kafka-ui
 # 3. Create Kafka topics
 ./infra/docker/kafka/kafka-setup.sh
 
-# 4. Run DB migrations (Flyway runs automatically on service start)
+# 4. Build all Java modules (compiles + runs tests for every service)
+./mvnw clean install -DskipTests          # fast build, skip tests
+./mvnw clean install                       # full build with tests
 
-# 5. Start Java services (separate terminals)
-./gradlew :services:auth-service:bootRun
-./gradlew :services:api-gateway:bootRun
-./gradlew :services:billing-service:bootRun
-./gradlew :services:usage-aggregator:bootRun
-./gradlew :services:invoice-service:bootRun
-./gradlew :services:payment-service:bootRun
+# 5. Run DB migrations
+# Flyway runs automatically on Spring Boot startup.
+# To run standalone against a running DB:
+./mvnw flyway:migrate -pl services/billing-service
 
-# 6. Start notification service
+# 6. Start Java services (separate terminals, each in repo root)
+./mvnw spring-boot:run -pl services/auth-service
+./mvnw spring-boot:run -pl services/api-gateway
+./mvnw spring-boot:run -pl services/billing-service
+./mvnw spring-boot:run -pl services/usage-aggregator
+./mvnw spring-boot:run -pl services/invoice-service
+./mvnw spring-boot:run -pl services/payment-service
+
+# Alternative: build a fat JAR and run it
+./mvnw package -pl services/auth-service -DskipTests
+java -jar services/auth-service/target/auth-service-*.jar
+
+# 7. Start notification service
 cd services/notification-service
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8086
 
-# 7. Start frontend
+# 8. Start frontend
 cd frontend
 npm install
 npm run dev
@@ -853,7 +908,7 @@ Keep these in front of you while building. These are your definition of "done":
 | Webhook idempotency | 100% — zero double-charges | stress-test-webhooks.sh (100 duplicates) |
 | Invoice idempotency | 100% — zero duplicate invoices | Run billing job 10x, count invoices in DB |
 | Usage visibility latency | < 5 seconds after event | Fire event, poll /usage/current, measure |
-| Test coverage (core logic) | >= 75% | ./gradlew test jacocoTestReport |
+| Test coverage (core logic) | >= 75% | `./mvnw verify` — JaCoCo report at `target/site/jacoco/index.html` |
 | Kafka recovery | 0 data loss after restart | Kill aggregator mid-stream, restart, verify totals |
 
 ---
