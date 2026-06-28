@@ -323,5 +323,39 @@ Run a single PostgreSQL instance locally. Each service owns a dedicated PostgreS
 
 ---
 
+## ADR-012 — JPA Entity Package Naming Convention
+
+**Date:** June 2026  
+**Status:** ✅ Accepted
+
+### Decision
+Use `.entity` (e.g., `com.billing.auth.entity`) instead of `.model` for JPA entity classes.
+
+### Reasoning
+- Industry standard for Spring Boot applications using JPA is to explicitly label database-mapped classes as entities.
+- `.model` is often too generic and is frequently used for domain models or Data Transfer Objects (DTOs) that do not directly map to database tables.
+- This creates clear boundaries: `.entity` for database, `.dto` for API payloads.
+
+---
+
+## ADR-013 — Database Migrations (Flyway vs ddl-auto)
+
+**Date:** June 2026  
+**Status:** ✅ Accepted
+
+### Decision
+Use **Flyway** for all database schema migrations in production and shared environments. Do not rely on Hibernate's `spring.jpa.hibernate.ddl-auto: update`.
+
+### Reasoning
+- `ddl-auto: update` is unpredictable and dangerous for production data. It does not handle column renames, deletions, or data transformations safely.
+- Flyway enforces version-controlled SQL scripts (e.g., `V1__create_users.sql`). This guarantees that every environment (local, staging, production) has the exact same database state.
+- Makes schema changes reviewable in Pull Requests (PRs).
+
+### Consequences
+- During initial scaffolding and learning phases, `ddl-auto` may be used locally for rapid prototyping.
+- Before a service is considered "feature complete", all its tables must be defined in Flyway migration scripts located in `src/main/resources/db/migration`.
+
+---
+
 *Add a new ADR every time a significant design decision is made.*
 *Even "we decided NOT to do X" decisions are worth recording.*
