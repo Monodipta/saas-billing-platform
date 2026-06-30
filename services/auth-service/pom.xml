@@ -32,6 +32,17 @@
         <scope>runtime</scope>
     </dependency>
 
+  <!-- Flyway — database migration tool -->
+    <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-core</artifactId>
+    </dependency>
+
+    <!-- Required for Flyway to work with PostgreSQL 10+ -->
+    <dependency>
+        <groupId>org.flywaydb</groupId>
+        <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
 
   </dependencies>
 
@@ -40,6 +51,9 @@
         <plugin>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-maven-plugin</artifactId>
+            <configuration>
+                <jvmArguments>-Duser.timezone=UTC</jvmArguments>
+            </configuration>
         </plugin>
     </plugins>
   </build>

@@ -1,1 +1,2 @@
 com\billing\auth\AuthApplication.class
+com\billing\auth\entity\User.class
