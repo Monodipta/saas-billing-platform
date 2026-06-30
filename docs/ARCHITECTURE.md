@@ -53,7 +53,40 @@ its own subscription plan, and its own usage quotas.
 
 ## 2. Architecture Diagram
 
-![Architecture Diagram](./architecture-diagram.png)
+```mermaid
+flowchart TD
+    %% UI and Event Ingestion
+    UI[Tenant UI] -->|REST| GW[API gateway]
+    Events[Usage events] --> K[Kafka]
+
+    %% NEW: Auth Service 
+    GW -->|REST: Route Login/Register| Auth[Auth Service]
+    Auth -.->|Issues JWT| UI
+
+    %% Core Services
+    GW -->|REST: Validates JWT & Routes| Plan[Plan service]
+    
+    K --> Agg[Aggregator\nTallies usage]
+    Agg --> RedisAgg[(Redis)]
+    Agg --> DBAgg[(PostgreSQL)]
+
+    Plan -->|gRPC| Inv[Invoice\nComputes charge]
+    Agg -->|gRPC| Inv
+    Inv --> DBInv[(PostgreSQL)]
+
+    Inv -->|REST| Pay[Payment\nConfirms charge]
+    Pay --> DBPay[(PostgreSQL)]
+    Pay --> RedisPay[(Redis)]
+
+    Pay -.->|Kafka Event| Notify[Notify\nSends an alert]
+    Notify --> DBNotif[(PostgreSQL)]
+    
+    %% Styling
+    classDef gateway fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef newService fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
+    class GW gateway;
+    class Auth newService;
+```
 
 ### Reading the diagram
 
