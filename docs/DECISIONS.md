@@ -357,5 +357,84 @@ Use **Flyway** for all database schema migrations in production and shared envir
 
 ---
 
+## ADR-014 — OTP Storage: Redis (not PostgreSQL)
+
+**Date:** June 2026
+**Status:** ✅ Accepted
+
+### Decision
+All OTP data (password reset OTPs, email verification OTPs, attempt counters) is stored in Redis — not in PostgreSQL tables.
+
+### Reasoning
+- OTPs are inherently temporary. Redis TTL handles expiry automatically — no cleanup job needed.
+- Attempt counters use Redis `INCR`, which is atomic — no race conditions.
+- PostgreSQL would require a cleanup job, an `expires_at` query on every check, and extra columns.
+- Redis is the right tool for short-lived, high-speed, auto-expiring data.
+
+### Rejected Alternatives
+- **PostgreSQL `otps` table:** Rejected — overkill for temporary data. Requires manual cleanup and is slower.
+
+---
+
+## ADR-015 — JWT Revocation: Redis Blacklist via JTI
+
+**Date:** June 2026
+**Status:** ✅ Accepted
+
+### Decision
+On logout, store the JWT's `jti` (JWT ID) in Redis with a TTL equal to the token's remaining lifetime. Every request checks if the `jti` is blacklisted before trusting the token.
+
+### Reasoning
+- JWTs are stateless by nature — once issued, they're valid until expiry. Without a revocation mechanism, a stolen or logged-out token can still be used.
+- Storing only the `jti` (not the full token) is memory-efficient.
+- TTL = remaining lifetime = zero wasted memory after the token would have expired naturally.
+- This is the industry-standard pattern for JWT logout in stateless systems.
+
+### Consequences
+- The API Gateway must check Redis blacklist on every authenticated request (one `GET` call — sub-millisecond).
+- This adds a tiny Redis dependency to the Gateway, but it's necessary for proper security.
+
+---
+
+## ADR-016 — Refresh Token + Session Management
+
+**Date:** June 2026
+**Status:** ✅ Accepted
+
+### Decision
+Implement long-lived refresh tokens stored in the `refresh_tokens` table (one per device), paired with active session tracking in the `sessions` table.
+
+### Reasoning
+- Short-lived access tokens (15-30 min) + long-lived refresh tokens is the industry standard.
+- Storing `device_info` and `ip_address` enables per-device logout and suspicious login detection.
+- `is_revoked` flag allows targeted revocation (e.g., logout from all devices on password reset).
+- Sessions table tracks `last_active_at` for 25k+ user activity monitoring.
+
+### Consequences
+- On password reset, all refresh tokens for the user are revoked — forces re-login on all devices.
+- Refresh token rotation can be added as a future enhancement (v2).
+
+---
+
+## ADR-017 — Password Reset: Three-Step Flow with Session Token
+
+**Date:** June 2026
+**Status:** ✅ Accepted
+
+### Decision
+Password reset uses a 3-step flow: (1) Request OTP → (2) Verify OTP → get a short-lived `reset_session_token` → (3) Use token to set new password.
+
+### Reasoning
+- Combining OTP verification and password change in one step is less secure. An attacker who intercepts the OTP can immediately change the password.
+- The intermediate `password_reset_sessions` token gates the actual password change — it's a one-time-use token valid for 15 minutes only.
+- `is_used = true` flag prevents replay attacks.
+- This mirrors how Stripe, GitHub, and other production systems handle password resets.
+
+### Consequences
+- Three API endpoints are required: `/auth/forgot-password`, `/auth/verify-otp`, `/auth/reset-password`.
+- `password_reset_sessions` rows for used/expired tokens can be cleaned up by a scheduled job later.
+
+---
+
 *Add a new ADR every time a significant design decision is made.*
 *Even "we decided NOT to do X" decisions are worth recording.*

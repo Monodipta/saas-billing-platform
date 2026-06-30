@@ -56,36 +56,41 @@ its own subscription plan, and its own usage quotas.
 ```mermaid
 flowchart TD
     %% UI and Event Ingestion
-    UI[Tenant UI] -->|REST| GW[API gateway]
+    UI[Tenant UI] -->|REST| GW[API Gateway]
     Events[Usage events] --> K[Kafka]
 
-    %% NEW: Auth Service 
+    %% Auth Service — uses both Redis and PostgreSQL
     GW -->|REST: Route Login/Register| Auth[Auth Service]
     Auth -.->|Issues JWT| UI
+    Auth --> RedisAuth[(Redis\nOTPs · Blacklist · Rate Limits)]
+    Auth --> DBAuth[(PostgreSQL\nusers · sessions · refresh_tokens)]
 
     %% Core Services
-    GW -->|REST: Validates JWT & Routes| Plan[Plan service]
-    
+    GW -->|REST: Validates JWT & Routes| Plan[Plan Service]
+    GW -->|Check JWT blacklist| RedisAuth
+
     K --> Agg[Aggregator\nTallies usage]
-    Agg --> RedisAgg[(Redis)]
-    Agg --> DBAgg[(PostgreSQL)]
+    Agg --> RedisAgg[(Redis\nHot Totals · Dedup)]
+    Agg --> DBAgg[(PostgreSQL\nusage_totals)]
 
     Plan -->|gRPC| Inv[Invoice\nComputes charge]
     Agg -->|gRPC| Inv
-    Inv --> DBInv[(PostgreSQL)]
+    Inv --> DBInv[(PostgreSQL\ninvoices)]
 
     Inv -->|REST| Pay[Payment\nConfirms charge]
-    Pay --> DBPay[(PostgreSQL)]
-    Pay --> RedisPay[(Redis)]
+    Pay --> DBPay[(PostgreSQL\npayment_attempts)]
+    Pay --> RedisPay[(Redis\nIdempotency)]
 
     Pay -.->|Kafka Event| Notify[Notify\nSends an alert]
-    Notify --> DBNotif[(PostgreSQL)]
-    
+    Notify --> DBNotif[(PostgreSQL\nnotification_log)]
+
     %% Styling
     classDef gateway fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
-    classDef newService fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
+    classDef authService fill:#f3e5f5,stroke:#8e24aa,stroke-width:2px;
+    classDef store fill:#f9fbe7,stroke:#827717,stroke-width:1px;
     class GW gateway;
-    class Auth newService;
+    class Auth authService;
+    class RedisAuth,DBAuth,RedisAgg,DBAgg,DBInv,DBPay,RedisPay,DBNotif store;
 ```
 
 ### Reading the diagram
@@ -142,9 +147,11 @@ Issues JWT on login/register        Plans, Subscriptions, State Machine
 ### 3.2 Auth Service
 | | |
 |---|---|
-| **Tech** | Java 21, Spring Boot 3.x, Spring Security, PostgreSQL |
+| **Tech** | Java 21, Spring Boot 3.x, Spring Security, PostgreSQL, Redis |
 | **Port** | 8085 (internal only) |
-| **Responsibilities** | User registration, login, JWT signing (HS256), password hashing (BCrypt) |
+| **Responsibilities** | User registration, login, JWT issuance (HS256 + `jti`), password hashing (BCrypt), email verification OTP, password reset (3-step flow), refresh token management, JWT blacklist on logout |
+| **PostgreSQL tables** | `users`, `refresh_tokens`, `sessions`, `password_reset_sessions` |
+| **Redis keys** | `otp:*` (OTPs), `blacklist:access:*` (JWT revocation), `rate_limit:*` (resend throttle) |
 | **Maven module** | `services/auth-service` |
 
 ### 3.3 Billing Service
@@ -359,7 +366,7 @@ Each service owns its own **schema** (logical isolation within the same PostgreS
 
 | Schema | Service | Key Tables |
 |---|---|---|
-| `auth` | Auth Service | `users` |
+| `auth` | Auth Service | `users`, `refresh_tokens`, `sessions`, `password_reset_sessions` |
 | `billing` | Billing Service | `plans`, `plan_versions`, `subscriptions`, `audit_logs` |
 | `usage` | Usage Aggregator | `usage_totals`, `usage_events_raw` (optional archive) |
 | `invoice` | Invoice Service | `invoices`, `invoice_line_items` |
@@ -371,9 +378,18 @@ Each service owns its own **schema** (logical isolation within the same PostgreS
 
 ### Redis
 
-Used by Usage Aggregator only:
+**Auth Service:**
+- **OTP store:** `otp:pwd_reset:{userId}`, `otp:email_verify:{userId}` → bcrypt hash (TTL: 10 min / 24 hrs)
+- **Attempt counters:** `otp:pwd_reset:{userId}:attempts` → integer, atomic INCR (same TTL as OTP)
+- **Rate limiter:** `rate_limit:{userId}:otp` → `1`, NX flag (TTL: 2 min)
+- **JWT blacklist:** `blacklist:access:{jti}` → `1` (TTL: remaining JWT lifetime)
+
+**Usage Aggregator:**
 - **Hot usage totals:** `usage:{tenant_id}:{cycle}:{metric}` → integer counter
 - **Deduplication set:** `dedup:{event_id}` → exists or not (TTL: 7 days)
+
+**Payment Service:**
+- **Idempotency cache:** Short-lived keys to prevent double-processing of webhook events
 
 ### Kafka
 
